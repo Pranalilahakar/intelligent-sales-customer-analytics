@@ -89,3 +89,50 @@ def test_customer_priority_found():
 def test_customer_priority_not_found():
     response = client.get("/priority/999999999")
     assert response.status_code == 404
+
+
+def test_list_churn_predictions():
+    response = client.get("/churn")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["model"] == "logistic"
+    assert data["count"] > 0
+    assert len(data["results"]) <= 20
+    assert "Logistic_Churn_Probability" in data["results"][0]
+    assert "historical test customers" in data["note"]
+
+
+def test_list_churn_predictions_random_forest():
+    response = client.get(
+        "/churn",
+        params={"model": "random_forest", "limit": 5},
+    )
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["model"] == "random_forest"
+    assert data["count"] <= 5
+    assert "RandomForest_Churn_Probability" in data["results"][0]
+
+
+def test_invalid_churn_model():
+    response = client.get("/churn", params={"model": "invalid"})
+    assert response.status_code == 400
+
+
+def test_customer_churn_prediction_found():
+    response = client.get("/churn/12449")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert str(data["CustomerID"]).replace(".0", "") == "12449"
+    assert "Actual_Churn" in data
+    assert "Logistic_Churn_Probability" in data
+    assert "RandomForest_Churn_Probability" in data
+    assert "Historical test-set prediction" in data["note"]
+
+
+def test_customer_churn_prediction_not_found():
+    response = client.get("/churn/999999999")
+    assert response.status_code == 404

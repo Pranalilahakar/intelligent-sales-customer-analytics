@@ -12,6 +12,9 @@ SALES_FILE = PROCESSED_DIR / "sales_analysis.csv"
 SEGMENTS_FILE = PROCESSED_DIR / "customer_segments.csv"
 SEGMENT_SUMMARY_FILE = PROCESSED_DIR / "customer_segment_summary.csv"
 PRIORITY_FILE = PROCESSED_DIR / "customer_priority_scores.csv"
+CHURN_PREDICTIONS_FILE = (
+    PROCESSED_DIR / "churn_model_predictions.csv"
+)
 
 app = FastAPI(
     title="Intelligent Sales & Customer Analytics API",
@@ -80,11 +83,12 @@ def root():
 def health():
     """Check API status and availability of required data files."""
     files = {
-        "sales_analysis": SALES_FILE,
-        "customer_segments": SEGMENTS_FILE,
-        "customer_segment_summary": SEGMENT_SUMMARY_FILE,
-        "customer_priority_scores": PRIORITY_FILE,
-    }
+    "sales_analysis": SALES_FILE,
+    "customer_segments": SEGMENTS_FILE,
+    "customer_segment_summary": SEGMENT_SUMMARY_FILE,
+    "customer_priority_scores": PRIORITY_FILE,
+    "churn_model_predictions": CHURN_PREDICTIONS_FILE,
+}
 
     file_status = {
         name: path.exists()
@@ -281,3 +285,103 @@ def get_customer_priority(customer_id: str):
     )
 
     return result
+
+
+@app.get("/churn")
+def list_churn_predictions(
+    model: str = Query(
+        default="logistic",
+        description="Model to use: logistic or random_forest",
+    ),
+    limit: int = Query(default=20, ge=1, le=500),
+):
+    """Return saved historical churn test predictions."""
+    model = model.strip().lower()
+
+    probability_columns = {
+        "logistic": "Logistic_Churn_Probability",
+        "random_forest": "RandomForest_Churn_Probability",
+    }
+
+    prediction_columns = {
+        "logistic": "Logistic_Predicted_Churn",
+        "random_forest": "RandomForest_Predicted_Churn",
+    }
+
+    if model not in probability_columns:
+        raise HTTPException(
+            status_code=400,
+            detail="Model must be 'logistic' or 'random_forest'.",
+        )
+
+    predictions = load_csv(CHURN_PREDICTIONS_FILE)
+
+    required_columns = {
+        "CustomerID",
+        "Actual_Churn",
+        probability_columns[model],
+        prediction_columns[model],
+    }
+
+    missing = required_columns - set(predictions.columns)
+
+    if missing:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Churn predictions file is missing columns: {sorted(missing)}",
+        )
+
+    predictions[probability_columns[model]] = pd.to_numeric(
+        predictions[probability_columns[model]],
+        errors="coerce",
+    )
+
+    predictions = predictions.dropna(
+        subset=[probability_columns[model]]
+    )
+
+    predictions = predictions.sort_values(
+        probability_columns[model],
+        ascending=False,
+    ).head(limit)
+
+    return {
+        "count": len(predictions),
+        "model": model,
+        "limit": limit,
+        "results": records_from_dataframe(predictions),
+        "note": (
+            "These are saved predictions for historical test customers, "
+            "not live predictions for all customers."
+        ),
+    }
+
+
+@app.get("/churn/{customer_id}")
+def get_customer_churn_prediction(customer_id: str):
+    """Return saved historical churn predictions for one test customer."""
+    predictions = load_csv(CHURN_PREDICTIONS_FILE)
+
+    if "CustomerID" not in predictions.columns:
+        raise HTTPException(
+            status_code=500,
+            detail="CustomerID column is missing from churn predictions.",
+        )
+
+    matches = predictions[
+        customer_id_matches(predictions["CustomerID"], customer_id)
+    ]
+
+    if matches.empty:
+        raise HTTPException(
+            status_code=404,
+            detail="Customer not found in the saved churn test predictions.",
+        )
+
+    return {
+        **records_from_dataframe(matches)[0],
+        "note": (
+            "Historical test-set prediction. Actual_Churn describes "
+            "the historical label window, not current customer status."
+        ),
+    }
