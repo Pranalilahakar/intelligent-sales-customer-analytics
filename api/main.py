@@ -19,6 +19,9 @@ SALES_FILE = PROCESSED_DIR / "sales_analysis.csv"
 SEGMENTS_FILE = PROCESSED_DIR / "customer_segments.csv"
 SEGMENT_SUMMARY_FILE = PROCESSED_DIR / "customer_segment_summary.csv"
 PRIORITY_FILE = PROCESSED_DIR / "customer_priority_scores.csv"
+CUSTOMER_ACTIONS_FILE = (
+    PROCESSED_DIR / "customer_action_recommendations.csv"
+)
 
 CHURN_PREDICTIONS_FILE = (
     PROCESSED_DIR / "churn_model_predictions.csv"
@@ -202,6 +205,7 @@ def health():
         "customer_segments": SEGMENTS_FILE,
         "customer_segment_summary": SEGMENT_SUMMARY_FILE,
         "customer_priority_scores": PRIORITY_FILE,
+        "customer_action_recommendations": CUSTOMER_ACTIONS_FILE,
         "churn_model_predictions": CHURN_PREDICTIONS_FILE,
         "purchase_propensity_model": PURCHASE_PROPENSITY_MODEL_FILE,
         "purchase_propensity_predictions": PURCHASE_PROPENSITY_PREDICTIONS_FILE,
@@ -660,3 +664,122 @@ def score_purchase_propensity(
             "The model was trained on historical retail data ending in 2011."
         ),
     }
+
+# ============================================================
+# CUSTOMER ACTION RECOMMENDATIONS
+# ============================================================
+
+@app.get("/customer-actions")
+def list_customer_actions(
+    action_priority: str | None = Query(
+        default=None,
+        description="Optional action priority: High, Medium, or Low",
+    ),
+    recommended_action: str | None = Query(
+        default=None,
+        description="Optional exact recommended action filter",
+    ),
+    limit: int = Query(default=20, ge=1, le=500),
+):
+    """Return customer action recommendations."""
+
+    actions = load_csv(CUSTOMER_ACTIONS_FILE)
+
+    required_columns = {
+        "CustomerID",
+        "Segment_Name",
+        "Churn_Risk_Status",
+        "Priority_Score",
+        "Action_Priority",
+        "Recommended_Action",
+        "Recommendation_Reason",
+    }
+
+    validate_columns(actions, required_columns, "Customer action recommendations file")
+
+    valid_priorities = {"High", "Medium", "Low"}
+    if action_priority is not None:
+        if action_priority not in valid_priorities:
+            raise HTTPException(
+                status_code=400,
+                detail="Action priority must be High, Medium, or Low.",
+            )
+        actions = actions[
+            actions["Action_Priority"].astype(str) == action_priority
+        ].copy()
+
+    if recommended_action is not None:
+        valid_actions = {
+            "High-Value Win-Back Campaign",
+            "Customer Reactivation Campaign",
+            "Loyalty and Upsell Campaign",
+            "Second-Purchase Nurture Campaign",
+            "Repeat-Purchase Campaign",
+            "Low-Cost Customer Engagement",
+        }
+
+        if recommended_action not in valid_actions:
+            raise HTTPException(
+                status_code=400,
+                detail="Unknown recommended action.",
+            )
+
+        actions = actions[
+            actions["Recommended_Action"].astype(str) == recommended_action
+        ].copy()
+
+    priority_order = {"High": 0, "Medium": 1, "Low": 2}
+    actions["_priority_order"] = actions["Action_Priority"].map(priority_order)
+    actions["Priority_Score"] = pd.to_numeric(
+        actions["Priority_Score"], errors="coerce"
+    )
+
+    actions = actions.sort_values(
+        ["_priority_order", "Priority_Score"],
+        ascending=[True, False],
+        na_position="last",
+    ).drop(columns="_priority_order").head(limit)
+
+    return {
+        "count": len(actions),
+        "action_priority_filter": action_priority,
+        "recommended_action_filter": recommended_action,
+        "limit": limit,
+        "results": records_from_dataframe(actions),
+        "note": (
+            "Recommendations are based on transparent business rules and "
+            "historical retail data. They do not guarantee campaign success."
+        ),
+    }
+
+
+@app.get("/customer-actions/{customer_id}")
+def get_customer_action(customer_id: str):
+    """Return the action recommendation for one customer."""
+
+    actions = load_csv(CUSTOMER_ACTIONS_FILE)
+
+    validate_columns(
+        actions,
+        {
+            "CustomerID",
+            "Action_Priority",
+            "Recommended_Action",
+            "Recommendation_Reason",
+        },
+        "Customer action recommendations file",
+    )
+
+    matches = actions[
+        customer_id_matches(actions["CustomerID"], customer_id)
+    ]
+
+    if matches.empty:
+        raise HTTPException(
+            status_code=404,
+            detail="Customer action recommendation not found.",
+        )
+
+    result = records_from_dataframe(matches)[0]
+    result["recommendation_type"] = "rule-based"
+    return result
