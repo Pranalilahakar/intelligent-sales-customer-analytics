@@ -35,6 +35,16 @@ Calculates a weighted, rule-based customer priority score:
 
 Customers are assigned Low, Medium, or High Priority categories. These scores are not validated predictions of lead conversion.
 
+## Power BI Dashboard
+
+### Sales & Customer Performance
+
+![Sales & Customer Dashboard](screenshots/sales-customer-dashboard.png.png)
+
+### Customer Segmentation & RFM Insights
+
+![Customer Segmentation & RFM Dashboard](screenshots/customer-segmentation-rfm.png.png)
+
 ### FastAPI REST API
 
 | Method | Endpoint | Purpose |
@@ -98,4 +108,10 @@ python -m uvicorn api.main:app --reload
 ```
 
 Open `http://127.0.0.1:8000/docs` to explore the API.
+
+
+
+
+
+
 
